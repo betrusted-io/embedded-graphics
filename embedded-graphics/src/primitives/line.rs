@@ -224,14 +224,12 @@ impl<'a, C: PixelColor> IntoIterator for &'a Line<C> {
             swap,
             draw_left_side: true,
             perp: PerpLineIterator {
-                // start: self.start,
                 current_left: self.start,
                 current_right: self.start,
                 style: self.style,
                 width: width_threshold,
                 delta,
                 direction: perp_direction,
-                // start_err: 0,
                 err_left: 0,
                 err_right: 0,
                 current_iter_left: delta.x + delta.y + err,
@@ -239,7 +237,6 @@ impl<'a, C: PixelColor> IntoIterator for &'a Line<C> {
                 stop_left: false,
                 stop_right: false,
                 swap,
-                // skip_first: false,
             },
             // extra_perp: PerpLineIterator {
             //     start: self.start,
@@ -309,8 +306,6 @@ impl<C: PixelColor> Iterator for LineIterator<C> {
         }
 
         if !self.stop {
-            let start = self.start;
-
             if self.start == self.end || self.num_iter > 500 {
                 self.stop = true;
             }
@@ -347,7 +342,19 @@ impl<C: PixelColor> Iterator for LineIterator<C> {
 
             self.num_iter += 1;
 
-            Some(Pixel(start, self.style.stroke_color.unwrap()))
+            self.perp = PerpLineIterator {
+                current_left: self.start,
+                current_right: self.start,
+                err_left: 0,
+                err_right: 0,
+                current_iter_left: self.delta.x + self.delta.y + self.err,
+                current_iter_right: self.delta.x + self.delta.y - self.err,
+                stop_left: false,
+                stop_right: false,
+                ..self.perp
+            };
+
+            self.perp.next()
         } else {
             None
         }
