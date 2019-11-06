@@ -207,6 +207,8 @@ impl<'a, C: PixelColor> IntoIterator for &'a Line<C> {
             * ((delta.x.pow(2) + delta.y.pow(2)) as f32).sqrt())
         .round() as u32;
 
+        let err = 0;
+
         LineIterator {
             style: self.style,
 
@@ -214,7 +216,7 @@ impl<'a, C: PixelColor> IntoIterator for &'a Line<C> {
             end: self.end,
             delta,
             direction,
-            err: 0,
+            err,
             stop: self.start == self.end || self.style.stroke_width == 0, // if line length or width is zero, draw nothing
             num_iter: 0,
             perp_err: 0,
@@ -222,41 +224,47 @@ impl<'a, C: PixelColor> IntoIterator for &'a Line<C> {
             swap,
             draw_left_side: true,
             perp: PerpLineIterator {
-                start: self.start,
-                color: self.style.stroke_color,
+                // start: self.start,
+                current_left: self.start,
+                current_right: self.start,
+                style: self.style,
                 width: width_threshold,
                 delta,
                 direction: perp_direction,
-                err: 0,
-                current_iter: 0,
-                stop: true,
+                // start_err: 0,
+                err_left: 0,
+                err_right: 0,
+                current_iter_left: delta.x + delta.y + err,
+                current_iter_right: delta.x + delta.y - err,
+                stop_left: false,
+                stop_right: false,
                 swap,
-                skip_first: false,
+                // skip_first: false,
             },
-            extra_perp: PerpLineIterator {
-                start: self.start,
-                color: self.style.test_color,
-                width: width_threshold,
-                delta,
-                direction: perp_direction,
-                err: 0,
-                current_iter: 0,
-                stop: true,
-                swap,
-                skip_first: false,
-            },
-            extra_perp_right: PerpLineIterator {
-                start: self.start,
-                color: self.style.test_color,
-                width: width_threshold,
-                delta,
-                direction: perp_direction,
-                err: 0,
-                current_iter: 0,
-                stop: true,
-                swap: -swap,
-                skip_first: true,
-            },
+            // extra_perp: PerpLineIterator {
+            //     start: self.start,
+            //     color: self.style.test_color,
+            //     width: width_threshold,
+            //     delta,
+            //     direction: perp_direction,
+            //     err: 0,
+            //     current_iter: 0,
+            //     stop: true,
+            //     swap,
+            //     skip_first: false,
+            // },
+            // extra_perp_right: PerpLineIterator {
+            //     start: self.start,
+            //     color: self.style.test_color,
+            //     width: width_threshold,
+            //     delta,
+            //     direction: perp_direction,
+            //     err: 0,
+            //     current_iter: 0,
+            //     stop: true,
+            //     swap: -swap,
+            //     skip_first: true,
+            // },
         }
     }
 }
@@ -279,8 +287,8 @@ where
     num_iter: u32,
     // width: u32,
     perp: PerpLineIterator<C>,
-    extra_perp: PerpLineIterator<C>,
-    extra_perp_right: PerpLineIterator<C>,
+    // extra_perp: PerpLineIterator<C>,
+    // extra_perp_right: PerpLineIterator<C>,
     show_extra_perp: bool,
     perp_err: i32,
     swap: i32,
@@ -295,6 +303,10 @@ impl<C: PixelColor> Iterator for LineIterator<C> {
     fn next(&mut self) -> Option<Self::Item> {
         // return none if stroke color is none
         self.style.stroke_color?;
+
+        if let Some(point) = self.perp.next() {
+            return Some(point);
+        }
 
         if !self.stop {
             let start = self.start;
@@ -335,7 +347,7 @@ impl<C: PixelColor> Iterator for LineIterator<C> {
 
             self.num_iter += 1;
 
-            Some(Pixel(start, self.style.fill_color.unwrap()))
+            Some(Pixel(start, self.style.stroke_color.unwrap()))
         } else {
             None
         }
@@ -348,16 +360,21 @@ pub struct PerpLineIterator<C>
 where
     C: PixelColor,
 {
-    color: Option<C>,
-    start: Point,
+    style: Style<C>,
+    // start: Point,
     width: u32,
     delta: Point,
     direction: Point,
-    err: i32,
-    current_iter: i32,
-    stop: bool,
+    // start_err: i32,
+    err_left: i32,
+    err_right: i32,
+    current_iter_left: i32,
+    current_iter_right: i32,
+    stop_left: bool,
+    stop_right: bool,
     swap: i32,
-    skip_first: bool,
+    current_left: Point,
+    current_right: Point,
 }
 
 impl<C: PixelColor> Iterator for PerpLineIterator<C> {
@@ -365,57 +382,95 @@ impl<C: PixelColor> Iterator for PerpLineIterator<C> {
 
     fn next(&mut self) -> Option<Self::Item> {
         // Noop if color is none (line is transparent)
-        self.color?;
+        self.style.stroke_color?;
 
-        if !self.stop {
-            if self.current_iter >= self.width as i32 {
-                // self.stop = true;
-                return None;
-            }
-
-            let point = self.start;
-
-            if self.delta.x >= self.delta.y {
-                let threshold = self.delta.x - 2 * self.delta.y;
-                let e_diag = -2 * self.delta.x;
-                let e_square = 2 * self.delta.y;
-
-                if self.err > threshold {
-                    self.start += Point::new(self.direction.x * self.swap, 0);
-
-                    self.err += e_diag;
-                    self.current_iter += 2 * self.delta.y;
-                }
-
-                self.err += e_square;
-                self.current_iter += 2 * self.delta.x;
-
-                self.start += Point::new(0, self.direction.y * self.swap);
+        if !self.stop_left {
+            if self.current_iter_left > self.width as i32 {
+                self.stop_left = true;
             } else {
-                let threshold = self.delta.y - 2 * self.delta.x;
-                let e_diag = -2 * self.delta.y;
-                let e_square = 2 * self.delta.x;
+                let point = self.current_left;
 
-                if self.err > threshold {
-                    self.start += Point::new(0, self.direction.y * self.swap);
+                if self.delta.x >= self.delta.y {
+                    let threshold = self.delta.x - 2 * self.delta.y;
+                    let e_diag = -2 * self.delta.x;
+                    let e_square = 2 * self.delta.y;
 
-                    self.err += e_diag;
-                    self.current_iter += 2 * self.delta.x;
+                    if self.err_left > threshold {
+                        self.current_left += Point::new(self.direction.x * self.swap, 0);
+
+                        self.err_left += e_diag;
+                        self.current_iter_left += 2 * self.delta.y;
+                    }
+
+                    self.err_left += e_square;
+                    self.current_iter_left += 2 * self.delta.x;
+
+                    self.current_left += Point::new(0, self.direction.y * self.swap);
+                } else {
+                    let threshold = self.delta.y - 2 * self.delta.x;
+                    let e_diag = -2 * self.delta.y;
+                    let e_square = 2 * self.delta.x;
+
+                    if self.err_left > threshold {
+                        self.current_left += Point::new(0, self.direction.y * self.swap);
+
+                        self.err_left += e_diag;
+                        self.current_iter_left += 2 * self.delta.x;
+                    }
+
+                    self.err_left += e_square;
+                    self.current_iter_left += 2 * self.delta.y;
+
+                    self.current_left += Point::new(self.direction.x * self.swap, 0);
                 }
 
-                self.err += e_square;
-                self.current_iter += 2 * self.delta.y;
-
-                self.start += Point::new(self.direction.x * self.swap, 0);
+                return Some(Pixel(point, self.style.stroke_color.unwrap()));
             }
-
-            Some(Pixel(
-                if self.skip_first { self.start } else { point },
-                self.color.unwrap(),
-            ))
-        } else {
-            None
         }
+
+        if !self.stop_right {
+            if self.current_iter_right > self.width as i32 {
+                self.stop_right = true;
+            } else {
+                if self.delta.x >= self.delta.y {
+                    let threshold = self.delta.x - 2 * self.delta.y;
+                    let e_diag = -2 * self.delta.x;
+                    let e_square = 2 * self.delta.y;
+
+                    if self.err_right >= threshold {
+                        self.current_right -= Point::new(self.direction.x * self.swap, 0);
+
+                        self.err_right += e_diag;
+                        self.current_iter_right += 2 * self.delta.y;
+                    }
+
+                    self.err_right += e_square;
+                    self.current_iter_right += 2 * self.delta.x;
+
+                    self.current_right -= Point::new(0, self.direction.y * self.swap);
+                } else {
+                    let threshold = self.delta.y - 2 * self.delta.x;
+                    let e_diag = -2 * self.delta.y;
+                    let e_square = 2 * self.delta.x;
+
+                    if self.err_right >= threshold {
+                        self.current_right -= Point::new(0, self.direction.y * self.swap);
+
+                        self.err_right += e_diag;
+                        self.current_iter_right += 2 * self.delta.x;
+                    }
+
+                    self.err_right += e_square;
+                    self.current_iter_right += 2 * self.delta.y;
+
+                    self.current_right -= Point::new(self.direction.x * self.swap, 0);
+                }
+
+                return Some(Pixel(self.current_right, self.style.fill_color.unwrap()));
+            }
+        }
+
+        return None;
     }
 }
 
